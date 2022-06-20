@@ -132,11 +132,12 @@ func (dcs *defaultConfigSelector) SelectConfig(rpcInfo iresolver.RPCInfo) (*ires
 // The target name syntax is defined in
 // https://github.com/grpc/grpc/blob/master/doc/naming.md.
 // e.g. to use dns resolver, a "dns:///" prefix should be applied to the target.
+//与目标地址target建立连接(这里可以是一个域名由解析器 name:///service, 由解析器进行)
 func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *ClientConn, err error) {
 	cc := &ClientConn{
 		target:            target,
 		csMgr:             &connectivityStateManager{},
-		conns:             make(map[*addrConn]struct{}),
+		conns:             make(map[*addrConn]struct{}), //每个地址客户端都对应多个地址(注意：指针地址作为 key), 为什么会有多个addConn? TODO
 		dopts:             defaultDialOptions(),
 		blockingpicker:    newPickerWrapper(),
 		czData:            new(channelzData),
@@ -246,12 +247,12 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		default:
 		}
 	}
-	if cc.dopts.bs == nil {
+	if cc.dopts.bs == nil { //退避算法如果为空则使用默认的退避算法
 		cc.dopts.bs = backoff.DefaultExponential
 	}
 
 	// Determine the resolver to use.
-	resolverBuilder, err := cc.parseTargetAndFindResolver()
+	resolverBuilder, err := cc.parseTargetAndFindResolver() //找到解析器自定义或者默认
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +292,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		Target:           cc.parsedTarget,
 	}
 
-	// Build the resolver.
+	// Build the resolver. //通过解析器构建者构建解析器 参考
 	rWrapper, err := newCCResolverWrapper(cc, resolverBuilder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build resolver: %v", err)
@@ -542,7 +543,7 @@ func (cc *ClientConn) Connect() {
 		return
 	}
 	for ac := range cc.conns {
-		go ac.connect()
+		go ac.connect() //每个连接开启一个协程进行连接
 	}
 }
 
@@ -840,16 +841,16 @@ func (ac *addrConn) connect() error {
 		ac.mu.Unlock()
 		return errConnClosing
 	}
-	if ac.state != connectivity.Idle {
+	if ac.state != connectivity.Idle { //没有闲置也没有关闭，则说明连接正在处理中
 		ac.mu.Unlock()
 		return nil
 	}
 	// Update connectivity state within the lock to prevent subsequent or
 	// concurrent calls from resetting the transport more than once.
-	ac.updateConnectivityState(connectivity.Connecting, nil)
+	ac.updateConnectivityState(connectivity.Connecting, nil) //更新子连接状态
 	ac.mu.Unlock()
 
-	ac.resetTransport()
+	ac.resetTransport() //更新连接并开启建立连接
 	return nil
 }
 
@@ -1160,11 +1161,12 @@ func (ac *addrConn) adjustParams(r transport.GoAwayReason) {
 
 func (ac *addrConn) resetTransport() {
 	ac.mu.Lock()
-	if ac.state == connectivity.Shutdown {
+	if ac.state == connectivity.Shutdown { //重建连接的时候状态为开始关闭，那么就直接退出
 		ac.mu.Unlock()
 		return
 	}
 
+	//退避算法尝试重建连接，这里的addrs，其实已经是解析器根据host解析出来的详细对端地址了
 	addrs := ac.addrs
 	backoffFor := ac.dopts.bs.Backoff(ac.backoffIdx)
 	// This will be the duration that dial gets to finish.
@@ -1184,20 +1186,20 @@ func (ac *addrConn) resetTransport() {
 	// The spec doesn't mention what should be done for multiple addresses.
 	// https://github.com/grpc/grpc/blob/master/doc/connection-backoff.md#proposed-backoff-algorithm
 	connectDeadline := time.Now().Add(dialDuration)
-
+	//更新连接
 	ac.updateConnectivityState(connectivity.Connecting, nil)
 	ac.mu.Unlock()
-
+	//在连接超时完成之前进行重复尝试
 	if err := ac.tryAllAddrs(addrs, connectDeadline); err != nil {
-		ac.cc.resolveNow(resolver.ResolveNowOptions{})
+		ac.cc.resolveNow(resolver.ResolveNowOptions{}) //如果失败了，就执行resolveNow(可以由用户自定义，在连接失败之后可以立即重新更新地址已重新建立连接)
 		// After exhausting all addresses, the addrConn enters
 		// TRANSIENT_FAILURE.
 		ac.mu.Lock()
-		if ac.state == connectivity.Shutdown {
+		if ac.state == connectivity.Shutdown { //中途被关闭则退出
 			ac.mu.Unlock()
 			return
 		}
-		ac.updateConnectivityState(connectivity.TransientFailure, err)
+		ac.updateConnectivityState(connectivity.TransientFailure, err) //否则更新为失败(注意：说明TransientFailure 失败不一定是传输失败)
 
 		// Backoff.
 		b := ac.resetBackoff
@@ -1218,7 +1220,7 @@ func (ac *addrConn) resetTransport() {
 
 		ac.mu.Lock()
 		if ac.state != connectivity.Shutdown {
-			ac.updateConnectivityState(connectivity.Idle, err)
+			ac.updateConnectivityState(connectivity.Idle, err) //将连接又更新为闲置(这里不是失败才走进来的吗？)
 		}
 		ac.mu.Unlock()
 		return
@@ -1236,7 +1238,7 @@ func (ac *addrConn) tryAllAddrs(addrs []resolver.Address, connectDeadline time.T
 	var firstConnErr error
 	for _, addr := range addrs {
 		ac.mu.Lock()
-		if ac.state == connectivity.Shutdown {
+		if ac.state == connectivity.Shutdown { //如果连接状态为正在关闭则退出
 			ac.mu.Unlock()
 			return errConnClosing
 		}
@@ -1254,7 +1256,7 @@ func (ac *addrConn) tryAllAddrs(addrs []resolver.Address, connectDeadline time.T
 		channelz.Infof(logger, ac.channelzID, "Subchannel picks a new address %q to connect", addr.Addr)
 
 		err := ac.createTransport(addr, copts, connectDeadline)
-		if err == nil {
+		if err == nil { //任何一個地址建立成功就退出(只和一个地址建立连接怎么进行负载均衡呢？TODO)
 			return nil
 		}
 		if firstConnErr == nil {
@@ -1391,6 +1393,7 @@ func (ac *addrConn) createTransport(addr resolver.Address, copts transport.Conne
 // It sets addrConn to READY if the health checking stream is not started.
 //
 // Caller must hold ac.mu.
+//开启健康检查
 func (ac *addrConn) startHealthCheck(ctx context.Context) {
 	var healthcheckManagingState bool
 	defer func() {
@@ -1399,17 +1402,17 @@ func (ac *addrConn) startHealthCheck(ctx context.Context) {
 		}
 	}()
 
-	if ac.cc.dopts.disableHealthCheck {
+	if ac.cc.dopts.disableHealthCheck { //关闭了健康检查
 		return
 	}
-	healthCheckConfig := ac.cc.healthCheckConfig()
+	healthCheckConfig := ac.cc.healthCheckConfig() //没有健康检查配置也退出
 	if healthCheckConfig == nil {
 		return
 	}
-	if !ac.scopts.HealthCheckEnabled {
+	if !ac.scopts.HealthCheckEnabled { //平衡器为子连接设备的健康检查
 		return
 	}
-	healthCheckFunc := ac.cc.dopts.healthCheckFunc
+	healthCheckFunc := ac.cc.dopts.healthCheckFunc //自定义健康检查方法 参考health 自定实现健康检查逻辑
 	if healthCheckFunc == nil {
 		// The health package is not imported to set health check function.
 		//
@@ -1625,16 +1628,19 @@ func (cc *ClientConn) parseTargetAndFindResolver() (resolver.Builder, error) {
 	var rb resolver.Builder
 	parsedTarget, err := parseTarget(cc.target)
 	if err != nil {
+		//target格式不是这样 [scheme]://[authority]/endpoint
 		channelz.Infof(logger, cc.channelzID, "dial target %q parse failed: %v", cc.target, err)
 	} else {
 		channelz.Infof(logger, cc.channelzID, "parsed dial target is: %+v", parsedTarget)
 		rb = cc.getResolver(parsedTarget.Scheme)
 		if rb != nil {
+			//根据Scheme找到了对应的解析器构建者
 			cc.parsedTarget = parsedTarget
 			return rb, nil
 		}
 	}
 
+	//如果target名称不规范，或者根据scheme找不到解析的构建者，那么就会尝试使用默认的解析器进行解析
 	// We are here because the user's dial target did not contain a scheme or
 	// specified an unregistered scheme. We should fallback to the default
 	// scheme, except when a custom dialer is specified in which case, we should
@@ -1644,12 +1650,12 @@ func (cc *ClientConn) parseTargetAndFindResolver() (resolver.Builder, error) {
 	canonicalTarget := defScheme + ":///" + cc.target
 
 	parsedTarget, err = parseTarget(canonicalTarget)
-	if err != nil {
+	if err != nil { //使用默认的解析器格式还是错误的，那么就直接退出
 		channelz.Infof(logger, cc.channelzID, "dial target %q parse failed: %v", canonicalTarget, err)
 		return nil, err
 	}
 	channelz.Infof(logger, cc.channelzID, "parsed dial target is: %+v", parsedTarget)
-	rb = cc.getResolver(parsedTarget.Scheme)
+	rb = cc.getResolver(parsedTarget.Scheme) //否则使用默认解析器的构建者
 	if rb == nil {
 		return nil, fmt.Errorf("could not get resolver for default scheme: %q", parsedTarget.Scheme)
 	}

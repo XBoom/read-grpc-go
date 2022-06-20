@@ -50,15 +50,15 @@ func (s State) String() string {
 
 const (
 	// Idle indicates the ClientConn is idle.
-	Idle State = iota
+	Idle State = iota // 注意是 ClientConn闲置，但是实际对比是对addrConn.State，但是一个ClientConn对应多个addrConn
 	// Connecting indicates the ClientConn is connecting.
-	Connecting
+	Connecting //正在建立连接
 	// Ready indicates the ClientConn is ready for work.
-	Ready
+	Ready //就绪
 	// TransientFailure indicates the ClientConn has seen a failure but expects to recover.
-	TransientFailure
+	TransientFailure //传输失败期望恢复
 	// Shutdown indicates the ClientConn has started shutting down.
-	Shutdown
+	Shutdown //正在关闭
 )
 
 // ServingMode indicates the current mode of operation of the server.

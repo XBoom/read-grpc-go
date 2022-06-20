@@ -65,6 +65,11 @@ func Get(scheme string) Builder {
 // NOTE: this function must only be called during initialization time (i.e. in
 // an init() function), and is not thread-safe. The scheme set last overrides
 // previously set values.
+/*
+	默认解析器名称为 "passthrough",
+	1. 为什么还要单独使用 SetDefaultScheme 而不直接使用 SetScheme
+	答：只有域名前缀找不到解析器的时候才会去找默认的，也就是默认解析器可以变，域名根据前缀域名解析器名称也可以指定一个解析器
+*/
 func SetDefaultScheme(scheme string) {
 	defaultScheme = scheme
 }

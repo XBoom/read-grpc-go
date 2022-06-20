@@ -69,7 +69,7 @@ type dialOptions struct {
 }
 
 // DialOption configures how we set up the connection.
-type DialOption interface {
+type DialOption interface { //可选参数接口
 	apply(*dialOptions)
 }
 

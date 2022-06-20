@@ -51,13 +51,14 @@ type Exponential struct {
 
 // Backoff returns the amount of time to wait before the next retry given the
 // number of retries.
-func (bc Exponential) Backoff(retries int) time.Duration {
+func (bc Exponential) Backoff(retries int) time.Duration { //默认的退避算法
 	if retries == 0 {
-		return bc.Config.BaseDelay
+		return bc.Config.BaseDelay //第一次失败多久重试
 	}
+	//基础延迟和最大延迟
 	backoff, max := float64(bc.Config.BaseDelay), float64(bc.Config.MaxDelay)
 	for backoff < max && retries > 0 {
-		backoff *= bc.Config.Multiplier
+		backoff *= bc.Config.Multiplier //失败一次之后乘以重建因子
 		retries--
 	}
 	if backoff > max {
@@ -65,7 +66,7 @@ func (bc Exponential) Backoff(retries int) time.Duration {
 	}
 	// Randomize backoff delays so that if a cluster of requests start at
 	// the same time, they won't operate in lockstep.
-	backoff *= 1 + bc.Config.Jitter*(grpcrand.Float64()*2-1)
+	backoff *= 1 + bc.Config.Jitter*(grpcrand.Float64()*2-1) //增加一个随机数
 	if backoff < 0 {
 		return 0
 	}
