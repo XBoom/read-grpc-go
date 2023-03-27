@@ -1626,6 +1626,7 @@ func (cc *ClientConn) parseTargetAndFindResolver() (resolver.Builder, error) {
 	channelz.Infof(logger, cc.channelzID, "original dial target is: %q", cc.target)
 
 	var rb resolver.Builder
+	//將target 转换成 resolver.Target 结构
 	parsedTarget, err := parseTarget(cc.target)
 	if err != nil {
 		//target格式不是这样 [scheme]://[authority]/endpoint
